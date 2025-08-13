@@ -3,11 +3,13 @@ services:
     name: healtheye-backend
     env: node
     buildCommand: npm install
-    startCommand: node server.js
+    startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
+      - key: GEMINI_API_KEY
+        sync: false
     healthCheckPath: /health
     autoDeploy: true 
