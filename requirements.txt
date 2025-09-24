@@ -1,0 +1,10 @@
+# HealthEye Python backend requirements
+Flask==3.0.3
+flask-cors==4.0.1
+numpy==1.26.4
+Pillow==10.4.0
+tensorflow-cpu==2.15.0
+# If deployment image lacks AVX/FMA, consider tf==2.13.0 or tflite-runtime instead
+# tflite-runtime is lighter; uncomment below and remove tensorflow-cpu if needed
+# tflite-runtime==2.11.0
+gunicorn==21.2.0

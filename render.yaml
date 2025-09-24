@@ -1,8 +1,10 @@
 services:
+  # Node/Express API (chatbot, uploads, insights)
   - type: web
-    name: healtheye-backend
+    name: healtheye-node
     env: node
-    buildCommand: npm install
+    rootDir: .
+    buildCommand: npm ci
     startCommand: npm start
     envVars:
       - key: NODE_ENV
@@ -12,4 +14,21 @@ services:
       - key: GEMINI_API_KEY
         sync: false
     healthCheckPath: /health
-    autoDeploy: true 
+    autoDeploy: true
+
+  # Python/Flask TFLite prediction API
+  - type: web
+    name: healtheye-python
+    env: python
+    rootDir: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -w 1 -k gthread --threads 4 -b 0.0.0.0:$PORT prediction_server:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: WEB_CONCURRENCY
+        value: 1
+      - key: GUNICORN_CMD_ARGS
+        value: "--timeout 120"
+    healthCheckPath: /health
+    autoDeploy: true

@@ -32,33 +32,50 @@ app.use(bodyParser.urlencoded({ extended: true }));
 let conversationHistory = [];
 
 // Configure multer for file uploads
-const storage = multer.diskStorage({
-    destination: function (req, file, cb) {
-        const uploadDir = 'uploads';
-        if (!fs.existsSync(uploadDir)){
-            fs.mkdirSync(uploadDir);
-        }
-        cb(null, uploadDir);
-    },
-    filename: function (req, file, cb) {
-        cb(null, Date.now() + '-' + file.originalname);
-    }
-});
+// Detect Vercel environment
+const IS_VERCEL = !!process.env.VERCEL;
 
-const upload = multer({ 
-    storage: storage,
-    limits: {
-        fileSize: 10 * 1024 * 1024 // 10MB limit
-    },
-    fileFilter: function (req, file, cb) {
-        // Allow images and PDFs
-        if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') {
-            cb(null, true);
-        } else {
-            cb(new Error('Only image files and PDFs are allowed!'), false);
+// Storage strategy: use disk locally, memory on Vercel (read-only fs except /tmp)
+let upload;
+if (IS_VERCEL) {
+    upload = multer({
+        storage: multer.memoryStorage(),
+        limits: { fileSize: 10 * 1024 * 1024 },
+        fileFilter: function (req, file, cb) {
+            if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') {
+                cb(null, true);
+            } else {
+                cb(new Error('Only image files and PDFs are allowed!'), false);
+            }
         }
-    }
-});
+    });
+    console.log('📦 Using memory storage for uploads (Vercel environment)');
+} else {
+    const storage = multer.diskStorage({
+        destination: function (req, file, cb) {
+            const uploadDir = 'uploads';
+            if (!fs.existsSync(uploadDir)){
+                fs.mkdirSync(uploadDir);
+            }
+            cb(null, uploadDir);
+        },
+        filename: function (req, file, cb) {
+            cb(null, Date.now() + '-' + file.originalname);
+        }
+    });
+    upload = multer({
+        storage,
+        limits: { fileSize: 10 * 1024 * 1024 },
+        fileFilter: function (req, file, cb) {
+            if (file.mimetype.startsWith('image/') || file.mimetype === 'application/pdf') {
+                cb(null, true);
+            } else {
+                cb(new Error('Only image files and PDFs are allowed!'), false);
+            }
+        }
+    });
+    console.log('📦 Using disk storage for uploads (non-Vercel environment)');
+}
 
 // Root endpoint
 app.get('/', (req, res) => {
@@ -165,10 +182,10 @@ app.post('/api/upload-report', upload.single('report'), async (req, res) => {
             });
         }
 
-        console.log('📄 Processing uploaded file:', req.file.filename);
+    console.log('📄 Processing uploaded file:', req.file.originalname || req.file.filename);
         
         // Extract text from the uploaded file
-        const extractedText = await extractTextFromFile(req.file);
+    const extractedText = await extractTextFromFile(req.file);
         
         if (!extractedText || extractedText.trim().length === 0) {
             return res.status(400).json({
@@ -183,9 +200,11 @@ app.post('/api/upload-report', upload.single('report'), async (req, res) => {
         const healthData = await processHealthReport(extractedText);
         
         // Clean up uploaded file
-        fs.unlink(req.file.path, (err) => {
-            if (err) console.error('Error deleting file:', err);
-        });
+        if (!IS_VERCEL && req.file && req.file.path) {
+            fs.unlink(req.file.path, (err) => {
+                if (err) console.error('Error deleting file:', err);
+            });
+        }
         
         res.json({
             success: true,
@@ -198,7 +217,7 @@ app.post('/api/upload-report', upload.single('report'), async (req, res) => {
         console.error('Error processing report:', error);
         
         // Clean up file if it exists
-        if (req.file && fs.existsSync(req.file.path)) {
+        if (!IS_VERCEL && req.file && req.file.path && fs.existsSync(req.file.path)) {
             fs.unlink(req.file.path, (err) => {
                 if (err) console.error('Error deleting file:', err);
             });
@@ -352,14 +371,24 @@ async function extractTextFromFile(file) {
     try {
         if (file.mimetype === 'application/pdf') {
             // Extract text from PDF
-            const dataBuffer = fs.readFileSync(file.path);
+            const dataBuffer = file.buffer || fs.readFileSync(file.path);
             const data = await pdfParse(dataBuffer);
             return data.text;
         } else if (file.mimetype.startsWith('image/')) {
             // Extract text from image using OCR
-            const { data: { text } } = await Tesseract.recognize(file.path, 'eng', {
+            let imageSource = file.path;
+            if (file.buffer) {
+                // Write buffer temporarily if needed (Vercel memory)
+                const tmpPath = path.join('/tmp', `upload-${Date.now()}.img`);
+                fs.writeFileSync(tmpPath, file.buffer);
+                imageSource = tmpPath;
+            }
+            const { data: { text } } = await Tesseract.recognize(imageSource, 'eng', {
                 logger: m => console.log(m)
             });
+            if (file.buffer) {
+                try { fs.unlinkSync(imageSource); } catch (_) {}
+            }
             return text;
         }
         return null;
@@ -798,13 +827,11 @@ function generateRuleBasedResponse(message) {
 }
 
 // Start the server
-app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 HealthEye Chatbot Server is running on port ${PORT}`);
-    console.log(`📊 Health check: /health`);
-    console.log(`💬 Chat endpoint: /chat`);
-    console.log(`📄 Upload endpoint: /api/upload-report`);
-    console.log(`🧠 Health insights: /api/health-insights`);
-    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-});
+if (require.main === module) {
+    app.listen(PORT, '0.0.0.0', () => {
+        console.log(`🚀 HealthEye Chatbot Server (standalone) listening on ${PORT}`);
+    });
+}
 
+// Export for Vercel serverless
 module.exports = app;
