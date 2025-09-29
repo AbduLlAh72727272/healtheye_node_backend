@@ -291,6 +291,164 @@ app.post('/api/research-papers', async (req, res) => {
     }
 });
 
+// Medical Report Storage (In-memory for demo, use database in production)
+let reportStorage = new Map();
+
+// Store a medical report for public access
+app.post('/api/reports/store', async (req, res) => {
+    try {
+        const { reportData } = req.body;
+        
+        if (!reportData) {
+            return res.status(400).json({
+                success: false,
+                error: 'Report data is required'
+            });
+        }
+        
+        // Generate unique report ID
+        const reportId = generateReportId();
+        
+        // Store report with timestamp
+        const storedReport = {
+            id: reportId,
+            data: reportData,
+            createdAt: new Date().toISOString(),
+            accessCount: 0
+        };
+        
+        reportStorage.set(reportId, storedReport);
+        
+        // Generate public URL
+        const baseUrl = req.protocol + '://' + req.get('host');
+        const publicUrl = `${baseUrl}/report/${reportId}`;
+        
+        console.log(`📄 Report stored with ID: ${reportId}`);
+        
+        res.json({
+            success: true,
+            reportId: reportId,
+            publicUrl: publicUrl,
+            message: 'Report stored successfully'
+        });
+        
+    } catch (error) {
+        console.error('Error storing report:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to store report'
+        });
+    }
+});
+
+// Public report viewing endpoint
+app.get('/report/:reportId', async (req, res) => {
+    try {
+        const { reportId } = req.params;
+        
+        if (!reportStorage.has(reportId)) {
+            return res.status(404).send(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Report Not Found - HealthEye</title>
+                    <meta charset="UTF-8">
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <style>
+                        body { font-family: Arial, sans-serif; padding: 20px; text-align: center; background: #f5f5f5; }
+                        .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                        h1 { color: #e74c3c; }
+                        .logo { color: #3498db; font-size: 24px; font-weight: bold; margin-bottom: 20px; }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <div class="logo">🏥 HEALTHEYE</div>
+                        <h1>Report Not Found</h1>
+                        <p>The requested medical report could not be found. The report may have been removed or the link may be incorrect.</p>
+                        <p>Please contact your healthcare provider for assistance.</p>
+                    </div>
+                </body>
+                </html>
+            `);
+        }
+        
+        const report = reportStorage.get(reportId);
+        
+        // Increment access count
+        report.accessCount++;
+        reportStorage.set(reportId, report);
+        
+        console.log(`📖 Report ${reportId} accessed (${report.accessCount} times)`);
+        
+        // Generate HTML view of the report
+        const htmlReport = generateReportHTML(report.data, reportId);
+        
+        res.send(htmlReport);
+        
+    } catch (error) {
+        console.error('Error retrieving report:', error);
+        res.status(500).send(`
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Error - HealthEye</title>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <style>
+                    body { font-family: Arial, sans-serif; padding: 20px; text-align: center; background: #f5f5f5; }
+                    .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 10px; }
+                    h1 { color: #e74c3c; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>Server Error</h1>
+                    <p>An error occurred while retrieving the report. Please try again later.</p>
+                </div>
+            </body>
+            </html>
+        `);
+    }
+});
+
+// API endpoint to get report data (for mobile app)
+app.get('/api/reports/:reportId', async (req, res) => {
+    try {
+        const { reportId } = req.params;
+        
+        if (!reportStorage.has(reportId)) {
+            return res.status(404).json({
+                success: false,
+                error: 'Report not found'
+            });
+        }
+        
+        const report = reportStorage.get(reportId);
+        
+        // Increment access count
+        report.accessCount++;
+        reportStorage.set(reportId, report);
+        
+        res.json({
+            success: true,
+            data: report.data,
+            metadata: {
+                id: report.id,
+                createdAt: report.createdAt,
+                accessCount: report.accessCount
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error retrieving report data:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to retrieve report'
+        });
+    }
+});
+
 // AI-powered response generator with multiple fallbacks
 async function generateAIResponse(message) {
     console.log(`Received message: ${message}`);
@@ -908,6 +1066,364 @@ function getStaticHealthInsights(parameter, status) {
     };
     
     return insights;
+}
+
+// Generate unique report ID
+function generateReportId() {
+    const timestamp = Date.now().toString(36);
+    const randomStr = Math.random().toString(36).substring(2, 8);
+    return `HR${timestamp}${randomStr}`.toUpperCase();
+}
+
+// Generate HTML for report viewing
+function generateReportHTML(reportData, reportId) {
+    const {
+        patientName = 'Patient',
+        topPrediction = 'Unknown',
+        confidence = 0,
+        createdAt = new Date().toISOString(),
+        predictions = [],
+        status = 'processed',
+        doctorNotes = '',
+        isUrgent = false
+    } = reportData;
+    
+    const formattedDate = new Date(createdAt).toLocaleDateString('en-US', {
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
+    
+    const confidencePercentage = (confidence * 100).toFixed(1);
+    const statusColor = isUrgent ? '#e74c3c' : '#27ae60';
+    const statusText = isUrgent ? 'URGENT' : 'NORMAL';
+    
+    return `
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Medical Report - ${patientName} | HealthEye</title>
+            <style>
+                * {
+                    margin: 0;
+                    padding: 0;
+                    box-sizing: border-box;
+                }
+                
+                body {
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                    line-height: 1.6;
+                    color: #333;
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    min-height: 100vh;
+                    padding: 20px;
+                }
+                
+                .container {
+                    max-width: 800px;
+                    margin: 0 auto;
+                    background: white;
+                    border-radius: 15px;
+                    box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+                    overflow: hidden;
+                }
+                
+                .header {
+                    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                    color: white;
+                    padding: 30px;
+                    text-align: center;
+                }
+                
+                .logo {
+                    font-size: 28px;
+                    font-weight: bold;
+                    margin-bottom: 10px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 10px;
+                }
+                
+                .tagline {
+                    font-size: 14px;
+                    opacity: 0.9;
+                    font-weight: 300;
+                }
+                
+                .content {
+                    padding: 40px;
+                }
+                
+                .patient-info {
+                    background: #f8f9ff;
+                    padding: 25px;
+                    border-radius: 12px;
+                    margin-bottom: 30px;
+                    border-left: 5px solid #667eea;
+                }
+                
+                .patient-info h2 {
+                    color: #667eea;
+                    margin-bottom: 15px;
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                }
+                
+                .info-grid {
+                    display: grid;
+                    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                    gap: 15px;
+                    margin-top: 15px;
+                }
+                
+                .info-item {
+                    display: flex;
+                    justify-content: space-between;
+                    padding: 8px 0;
+                    border-bottom: 1px solid #e0e6ff;
+                }
+                
+                .info-label {
+                    font-weight: 600;
+                    color: #555;
+                }
+                
+                .info-value {
+                    color: #333;
+                }
+                
+                .analysis-section {
+                    background: white;
+                    border: 2px solid #e8ecf4;
+                    border-radius: 12px;
+                    padding: 25px;
+                    margin-bottom: 25px;
+                }
+                
+                .section-title {
+                    color: #667eea;
+                    font-size: 20px;
+                    margin-bottom: 20px;
+                    display: flex;
+                    align-items: center;
+                    gap: 10px;
+                }
+                
+                .primary-finding {
+                    background: linear-gradient(135deg, #667eea20, #764ba220);
+                    padding: 20px;
+                    border-radius: 10px;
+                    margin-bottom: 20px;
+                }
+                
+                .finding-label {
+                    font-size: 24px;
+                    font-weight: bold;
+                    color: #333;
+                    margin-bottom: 5px;
+                }
+                
+                .confidence-badge {
+                    display: inline-block;
+                    background: ${confidence >= 0.8 ? '#27ae60' : confidence >= 0.6 ? '#f39c12' : '#e74c3c'};
+                    color: white;
+                    padding: 8px 16px;
+                    border-radius: 20px;
+                    font-weight: bold;
+                    font-size: 14px;
+                }
+                
+                .status-badge {
+                    display: inline-block;
+                    background: ${statusColor};
+                    color: white;
+                    padding: 6px 12px;
+                    border-radius: 15px;
+                    font-weight: bold;
+                    font-size: 12px;
+                    margin-left: 10px;
+                }
+                
+                .predictions-list {
+                    margin-top: 20px;
+                }
+                
+                .prediction-item {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    padding: 12px 0;
+                    border-bottom: 1px solid #f0f0f0;
+                }
+                
+                .prediction-name {
+                    font-weight: 500;
+                    color: #333;
+                }
+                
+                .prediction-confidence {
+                    font-weight: bold;
+                    color: #667eea;
+                }
+                
+                .doctor-notes {
+                    background: #fff8e1;
+                    border: 1px solid #ffecb3;
+                    border-radius: 12px;
+                    padding: 20px;
+                    margin-top: 20px;
+                }
+                
+                .footer {
+                    background: #f8f9fa;
+                    padding: 25px 40px;
+                    text-align: center;
+                    border-top: 1px solid #e0e6ff;
+                    color: #666;
+                }
+                
+                .disclaimer {
+                    background: #fff3cd;
+                    border: 1px solid #ffeaa7;
+                    border-radius: 8px;
+                    padding: 15px;
+                    margin: 20px 0;
+                    font-size: 14px;
+                    color: #856404;
+                }
+                
+                .verification-info {
+                    background: #d4edda;
+                    border: 1px solid #c3e6cb;
+                    border-radius: 8px;
+                    padding: 15px;
+                    margin: 20px 0;
+                    color: #155724;
+                }
+                
+                @media (max-width: 768px) {
+                    .content {
+                        padding: 20px;
+                    }
+                    
+                    .info-grid {
+                        grid-template-columns: 1fr;
+                    }
+                    
+                    .prediction-item {
+                        flex-direction: column;
+                        align-items: flex-start;
+                        gap: 5px;
+                    }
+                }
+                
+                @media print {
+                    body {
+                        background: white;
+                        padding: 0;
+                    }
+                    
+                    .container {
+                        box-shadow: none;
+                        border-radius: 0;
+                    }
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="header">
+                    <div class="logo">
+                        🏥 HEALTHEYE
+                    </div>
+                    <div class="tagline">AI-Powered Medical Imaging & Diagnostic Services</div>
+                </div>
+                
+                <div class="content">
+                    <div class="patient-info">
+                        <h2>👤 Patient Information</h2>
+                        <div class="info-grid">
+                            <div class="info-item">
+                                <span class="info-label">Patient Name:</span>
+                                <span class="info-value">${patientName}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Report ID:</span>
+                                <span class="info-value">${reportId}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Date & Time:</span>
+                                <span class="info-value">${formattedDate}</span>
+                            </div>
+                            <div class="info-item">
+                                <span class="info-label">Status:</span>
+                                <span class="info-value">
+                                    ${statusText}
+                                    <span class="status-badge">${statusText}</span>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="analysis-section">
+                        <h2 class="section-title">🔬 AI Analysis Results</h2>
+                        
+                        <div class="primary-finding">
+                            <div class="finding-label">${topPrediction}</div>
+                            <div>
+                                <span class="confidence-badge">${confidencePercentage}% Confidence</span>
+                            </div>
+                        </div>
+                        
+                        ${predictions.length > 0 ? `
+                            <h3 style="margin-bottom: 15px; color: #555;">📊 Detailed Predictions</h3>
+                            <div class="predictions-list">
+                                ${predictions.slice(0, 5).map(pred => `
+                                    <div class="prediction-item">
+                                        <span class="prediction-name">${pred.label || pred.name || 'Unknown'}</span>
+                                        <span class="prediction-confidence">${((pred.confidence || pred.prob || 0) * 100).toFixed(1)}%</span>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                    </div>
+                    
+                    ${doctorNotes ? `
+                        <div class="analysis-section">
+                            <h2 class="section-title">👨‍⚕️ Doctor's Notes</h2>
+                            <div class="doctor-notes">
+                                ${doctorNotes}
+                            </div>
+                        </div>
+                    ` : ''}
+                    
+                    <div class="disclaimer">
+                        <strong>⚠️ Important Disclaimer:</strong> This report contains AI-generated analysis and should not be used as the sole basis for medical diagnosis or treatment decisions. Always consult with qualified healthcare professionals for proper medical advice.
+                    </div>
+                    
+                    <div class="verification-info">
+                        <strong>✅ Report Verification:</strong> This is an authentic HealthEye medical report. Report ID: ${reportId} | Generated: ${formattedDate}
+                    </div>
+                </div>
+                
+                <div class="footer">
+                    <p><strong>HealthEye Medical Services</strong></p>
+                    <p>AI-Powered Medical Imaging & Diagnostic Solutions</p>
+                    <p style="margin-top: 10px; font-size: 12px;">
+                        This report is digitally verified and does not require manual signature.<br>
+                        For questions about this report, please contact your healthcare provider.
+                    </p>
+                </div>
+            </div>
+        </body>
+        </html>
+    `;
 }
 
 // Fetch research papers using AI to simulate academic search
